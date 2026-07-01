@@ -5,6 +5,8 @@
 世の中に存在する頭部姿勢推定の実装は、論文はあってもREADMEが不十分だったり、依存関係が古くて動かなかったりすることが多いです。本リポジトリでは実際に**複数の手法を試し、スクリプトとして動かせたものを記録**しています。
 
 > ⚠️ 各手法の精度を比較する「ベンチマーク」ではなく、**「RealSense環境下でどう動かすか」の実践的ノウハウ集**です。
+>
+> ⚠️ **本リポジトリは「統合スクリプトの保管庫」であり、単体では動きません。** 各フォルダの`realsense.py`(または`.cpp`)は、元となったモデルのリポジトリ内に配置して実行することを前提にしています。使い方は[「使い方」](#-使い方)を参照してください。
 
 RealSenseは深度情報から**カメラ〜頭部間の距離推定**に使用しており、姿勢推定の精度そのものには関与していません(距離推定と姿勢推定は独立したパイプラインです)。
 
@@ -15,10 +17,10 @@ RealSenseは深度情報から**カメラ〜頭部間の距離推定**に使用�
 | 手法 | 言語/FW | RealSense対応 | 状態 | コメント |
 |---|---|---|---|---|
 | [6DRepNet](#1-6drepnet) | Python / PyTorch | スクリプト内で対応 | ✅ 動作 | pipで導入可、CPU動作可(`gpu_id=-1`) |
-| [Head-Pose-ncnn-Raspberry-Pi-4](#2-head-pose-ncnn-raspberry-pi-4) | C++ / ncnn | ネイティブ対応 (`realsense.cpp`) | ✅ 動作 | Ubuntu 20.04/22.04限定、24.04はncnnビルド不可 |
-| [Lightweight-Head-Pose-Estimation](#3-lightweight-head-pose-estimation) | Python / PyTorch | スクリプト内で対応 | ✅ 動作 | 1箇所コード修正でCPU動作可 |
+| [Head-Pose-ncnn-Raspberry-Pi-4](#2-head-pose-ncnn-raspberry-pi-4) | C++ / ncnn | ネイティブ対応 (`realsense.cpp`) | ✅ 動作 | 5点+SQPnP、最大3人対応、pitchキャリブレーション機能付き。Ubuntu 20.04/22.04限定 |
+| [Lightweight-Head-Pose-Estimation](#3-lightweight-head-pose-estimation) | Python / PyTorch | スクリプト内で対応 | ✅ 動作 | 最大3人対応・CSVログあり。1箇所コード修正でCPU動作可 |
 | [FSA-Net](#4-fsa-net) | Python / TensorFlow(Keras) | スクリプト内で対応 | ⚠️ 動作(重い) | 2箇所コード修正が必要、ノートPCでは処理が重い |
-| [headpose-fsanet-pytorch](#5-headpose-fsanet-pytorch) | Python / PyTorch, ONNX Runtime | スクリプト内で対応 | ✅ 動作 | FSA-NetのPyTorch移植版 |
+| [headpose-fsanet-pytorch](#5-headpose-fsanet-pytorch) | Python / PyTorch, ONNX Runtime | スクリプト内で対応 | ✅ 動作 | 2モデルアンサンブル。`src/`フォルダへの配置が必須 |
 
 ---
 
@@ -45,8 +47,18 @@ HeadPoseBench-RS/
 └── README.md
 ```
 
-各手法のフォルダは独立しており、`realsense.py`(Head-Pose-ncnn-Raspberry-Pi-4のみC++の`realsense.cpp`)を実行すればその場でRealSense統合デモが動く構成になっています。
+各フォルダは、対応する頭部姿勢推定手法のリポジトリに追加する**RealSense統合スクリプト(と元リポジトリのLICENSE)のみ**を保管しています。元モデルのコード・重み・依存ファイルは含んでいません。
 
+---
+
+## 🚀 使い方
+
+**本リポジトリのフォルダをそのまま実行することはできません。** 以下の手順で、別階層に元モデルのリポジトリをクローンしてから使ってください。
+
+1. 使いたい手法の**元リポジトリを別の場所にクローンする**(下記GitHubリンク参照)
+2. 本リポジトリの対応フォルダから **`realsense.py`(または`.cpp`)をコピーし、クローンしたリポジトリの指定の場所に配置**する(配置場所は各手法の節を参照。相対パスの都合で置き場所が重要な手法もある)
+3. 各手法の必要パッケージをインストール
+4. クローンしたリポジトリ内でスクリプトを実行
 
 ---
 
@@ -67,17 +79,20 @@ HeadPoseBench-RS/
 - GitHub: https://github.com/thohemp/6DRepNet
 - arXiv: https://doi.org/10.48550/arXiv.2202.12555
 
-最も手軽に動かせた手法。pipで導入可能で、CPUでも動作する。
+最も手軽に動かせた手法。**pipパッケージなのでリポジトリのクローンは不要**、CPUでも動作する。
 
 ```bash
-uv pip install sixdrepnet
+uv pip install sixdrepnet retina-face
 ```
 
-顔検出はHaar Cascade(OpenCV付属)を使用し、検出した顔領域を`SixDRepNet.predict()`に渡すことでYaw/Pitch/Rollを取得。`6DRepNet/realsense.py` を実行すれば、カメラ映像上に姿勢軸とFPSがオーバーレイ表示される。
+顔検出には**RetinaFace**を使用(5フレームに1回検出し、間のフレームは前回の検出結果を再利用することでCPU負荷を軽減)。検出した顔領域を`SixDRepNet.predict()`に渡してYaw/Pitch/Rollを取得し、さらに深度フレームから顔中心付近5px四方の中央値をとることで距離を安定して推定している。
 
 ```bash
-python 6DRepNet/realsense.py
+# 本リポジトリの 6DRepNet/realsense.py をどこでもよいので実行するだけ
+python realsense.py
 ```
+
+> ⚠️ RetinaFaceは初回実行時に重みファイルを自動ダウンロードするため、初回起動時のみ時間がかかる(要インターネット接続)。
 
 ---
 
@@ -85,7 +100,14 @@ python 6DRepNet/realsense.py
 
 - GitHub: https://github.com/Qengineering/Head-Pose-ncnn-Raspberry-Pi-4
 
-Raspberry Pi 4でも動作するように、[ncnn](https://github.com/Tencent/ncnn)(Tencent製の軽量推論フレームワーク)で実装された手法。**RealSenseとの統合が最も明示的**で、`solvePnP`による姿勢推定と、深度フレームからの距離推定(`get_distance` + `rs2_deproject_pixel_to_point`)を両方行っている。
+Raspberry Pi 4でも動作するように、[ncnn](https://github.com/Tencent/ncnn)(Tencent製の軽量推論フレームワーク)で実装された手法。**RealSenseとの統合が最も明示的**で、`solvePnP`による姿勢推定と、深度フレームからの距離推定(`rs2_deproject_pixel_to_point`)を両方行っている。
+
+本リポジトリの`realsense.cpp`はオリジナルから大きく改良を加えている:
+
+- 6点(顎を補間)ではなく**5点 + `SOLVEPNP_SQPNP`**を使用し、顎補間による誤差を排除
+- 深度距離でソートし、**最大3人を近い順に`speaker1`〜`speaker3`としてラベリング**(複数人同時対応)
+- `c`キー(正面向きを基準に校正)・`u`キー(上向き90°を基準に校正)による**pitchの実行時キャリブレーション**
+- `output.log`へフレームごとの距離・pitchをCSV形式で記録
 
 C++実装のため、ncnn自体をソースからビルドする必要がある。
 
@@ -120,6 +142,11 @@ set(ncnn_DIR /build_ncnn/ncnn/build/install/lib/cmake/ncnn)
 
 ```bash
 git clone https://github.com/Qengineering/Head-Pose-ncnn-Raspberry-Pi-4.git
+```
+
+クローンしたリポジトリのルートに、本リポジトリの `Head-Pose-ncnn-Raspberry-Pi-4/realsense.cpp` をコピー(必要なら`CMakeLists.txt`の`add_executable`対象もこれに変更)。`face.param`・`face.bin`はカレントディレクトリに置く必要があるため、実行時はリポジトリのルートから起動すること。
+
+```bash
 mkdir build && cd build
 cmake ..
 make -j$(nproc)
@@ -127,6 +154,10 @@ make -j$(nproc)
 ```
 
 > ⚠️ `FaceDetector.cpp` 44行目の `set_num_threads` 呼び出しは、参照先のncnnに存在しないためコメントアウトが必要。
+>
+> ⚠️ **`output.log`は`ios::app`で追記されるため、再起動するたびにヘッダー行がデータの途中に混ざる。** ファイルが空の場合のみヘッダーを書くように修正推奨。
+>
+> ⚠️ ループ先頭で`color_frame`/`depth_frame`の有効性チェックを行っていない。起動直後などにフレームが無効な場合クラッシュする可能性があるため、`if (!color_frame || !depth_frame) continue;`の追加を推奨。
 
 ---
 
@@ -136,15 +167,29 @@ make -j$(nproc)
 - IEEE: https://doi.org/10.1109/TMM.2022.3144893
 
 ```bash
-pip install numpy opencv-python torch torchvision
-python Lightweight-Head-Pose-Estimation/realsense.py
+git clone https://github.com/Shaw-git/Lightweight-Head-Pose-Estimation.git
+pip install numpy opencv-python pillow torch torchvision
 ```
+
+クローンしたリポジトリのルートに、本リポジトリの `Lightweight-Head-Pose-Estimation/realsense.py` をコピーして実行(`models/model-b66.pkl`・`lbpcascade_frontalface_improved.xml`がリポジトリのルートに必要)。
+
+```bash
+python realsense.py
+# 動画として保存したい場合
+python realsense.py --output result.avi
+```
+
+本リポジトリの`realsense.py`は、ncnn版と同様に**深度でソートして最大3人を`speaker1`〜`speaker3`としてラベリングし、`output.log`にCSV形式で記録**する構成になっている(全顔をまとめてバッチ推論するため効率的)。
 
 > ⚠️ CPUで動かす場合は `realsense.py` 内の該当箇所を以下のように書き換える:
 > ```python
 > pose_estimator = pose_estimator.to('cpu').eval()
 > ```
 > 顔検出を使いたい場合は追加で MTCNN + TensorFlow が必要。
+>
+> ⚠️ **`output.log`は追記(`"a"`)モードで開かれるが、起動するたびヘッダー行を書き込むため、再起動を繰り返すとヘッダーがデータの途中に混ざる。** ファイルが新規/空のときだけヘッダーを書くように修正推奨(Head-Pose-ncnn-Raspberry-Pi-4の`realsense.cpp`と同じ修正パターン)。
+>
+> ⚠️ 元論文の核心である「パースペクティブ変換による画像補正(rectification)」のステップが本スクリプトには見当たらない(正方形クロップ+リサイズのみ)。意図的な省略か、モデル側で吸収されているか確認推奨。省略している場合、画面端に近い顔では論文が想定する精度より低下する可能性がある。
 
 ---
 
@@ -173,11 +218,17 @@ pip install numpy opencv-python "tensorflow<2.16"
   c = tf.nn.softmax(b, axis=1)
   ```
 
+`realsense.py`は、オリジナルのデモスクリプトと同様に**3種類のFSA-Netサブモデル(Capsule / Var_Capsule / noS_Capsule)の出力を平均するアンサンブル構成**。顔検出はLBP Cascade(`lbpcascade_frontalface_improved.xml`)、距離推定は顔中心付近11×11pxの深度中央値を使用している。
+
+**本リポジトリの`FSA-Net/realsense.py`は、クローンしたFSA-Netリポジトリの`demo/`フォルダ内に配置して実行する**(スクリプト内の`sys.path.append('..')`や`../pre-trained/...`という相対パスが、元リポジトリの`demo/`フォルダを想定しているため)。
+
 ```bash
-python FSA-Net/realsense.py
+cp realsense.py FSA-Net/demo/
+cd FSA-Net/demo
+python realsense.py
 ```
 
-> ⚠️ ノートPC環境では処理がカクつく(重い)。
+> ⚠️ 実行中、5フレームごとに検出結果の画像を`img/`フォルダへ保存し続ける(デバッグ用の名残)。長時間実行するとディスクを圧迫するため、公開前に削除するか無効化を推奨。
 
 ---
 
@@ -189,8 +240,17 @@ python FSA-Net/realsense.py
 ```bash
 git clone https://github.com/ohtlab/headpose-fsanet-pytorch.git
 pip install numpy opencv-python onnxruntime
-python headpose-fsanet-pytorch/realsense.py
 ```
+
+**本リポジトリの`headpose-fsanet-pytorch/realsense.py`は、クローンしたリポジトリの`src/`フォルダ内に配置して実行する**(スクリプト内の`Path(__file__).absolute().parent.parent`がリポジトリルートを指す前提で、`<root>/pretrained/*.onnx`を参照しているため。ルート直下に置くとパスがリポジトリの外を指してしまいエラーになる)。
+
+```bash
+cp realsense.py headpose-fsanet-pytorch/src/
+cd headpose-fsanet-pytorch/src
+python realsense.py
+```
+
+`fsanet-1x1-iter-688590.onnx`と`fsanet-var-iter-688590.onnx`の2モデルを平均するアンサンブル構成(作者がIssueで推奨している組み合わせ)。onnxruntimeのみで動作するためPyTorch本体は不要。
 
 FSA-Netと同じ精度・軽さを、TensorFlow環境構築なしで得られるのが利点。
 
@@ -206,7 +266,7 @@ FSA-Netと同じ精度・軽さを、TensorFlow環境構築なしで得られる
 
 ## 📄 ライセンス
 
-本リポジトリのそれぞれのフォルダは、元となったリポジトリのライセンスに従います。**各フォルダに元リポジトリの`LICENSE`ファイルをそのまま同梱**しています(著作権表示・ライセンス文を保持する義務があるため)。
+本リポジトリのそれぞれのフォルダは、元となったリポジトリのライセンスに従います(スクリプトを元リポジトリに配置して使う前提のため)。**各フォルダに元リポジトリの`LICENSE`ファイルをそのまま同梱**しています(著作権表示・ライセンス文を保持する義務があるため)。
 
 | 手法 | オリジナル | ライセンス | 備考 |
 |---|---|---|---|
